@@ -5,7 +5,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"   # ⚠️ VULN : exposé sur toutes les interfaces (0.0.0.0)
     environment:
