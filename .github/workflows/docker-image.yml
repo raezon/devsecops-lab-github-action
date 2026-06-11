@@ -1,28 +1,28 @@
 name: "DevSecOps Module 1 — SAST + SCA"
- 
+
 on:
   push:
     branches: [main, develop]
   pull_request:
     branches: [main]
- 
+
 permissions:
   contents: read
   security-events: write
- 
+
 env:
   NODE_VERSION: "20.11.0"
- 
+
 jobs:
   sast-and-sca:
     name: "SAST (Semgrep) + SCA (Trivy)"
     runs-on: ubuntu-22.04
     steps:
- 
+
       # 1. Cloner le repo
       - uses: actions/checkout@v4
- 
-      # 2. Cache des outils (TOUJOURS en premier)
+
+      # 2. Cache des outils
       - name: Cache Trivy DB + Semgrep Rules
         uses: actions/cache@v4
         with:
@@ -32,35 +32,47 @@ jobs:
           key: ${{ runner.os }}-security-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-security-
- 
-      # 3. SAST — Analyse statique du code
+
+      # 3. SAST — Analyse statique du code (Semgrep)
       - name: SAST — Semgrep OSS
         run: |
           docker run --rm \
             -v ~/.cache/semgrep:/workspace/.cache/semgrep \
-            -v "${{ github.workspace }}:/src" \
+            -v "${{ github.workspace }}:/work" \
             returntocorp/semgrep semgrep ci \
               --config=p/javascript \
               --config=p/nodejs \
               --config=p/owasp-top-ten \
               --config=p/secrets \
               --text --output=semgrep-human-report.txt \
-          || echo "Semgrep : alertes detectees, rapport genere."
- 
-      # 4. SCA — Scan des dependances
-      - name: SCA — Trivy Dependances
+          || echo "Semgrep : alertes détectées, rapport généré."
+
+      # 4. SCA — Scan des dépendances (package.json à la racine)
+      - name: SCA — Trivy Dépendances
         run: |
           docker run --rm \
             -v ~/.cache/trivy:/root/.cache/trivy \
-            -v "${{ github.workspace }}:/src" \
-            aquasec/trivy:latest fs /src \
+            -v "${{ github.workspace }}:/work" \
+            aquasec/trivy:latest fs /work \
               --scanners vuln \
               --format table \
               --severity HIGH,CRITICAL \
-              --output /src/trivy-sca-report.txt \
-          || echo "Trivy SCA : vulnerabilites detectees, rapport genere."
- 
-      # 5. Archive des rapports (if: always() = OBLIGATOIRE)
+              --output /work/trivy-sca-report.txt \
+          || echo "Trivy SCA : vulnérabilités détectées, rapport généré."
+
+      # 5. IaC — Scan du Dockerfile (à la racine)
+      - name: IaC — Trivy Config (Dockerfile)
+        run: |
+          docker run --rm \
+            -v ~/.cache/trivy:/root/.cache/trivy \
+            -v "${{ github.workspace }}:/work" \
+            aquasec/trivy:latest config /work/ \
+              --format table \
+              --severity HIGH,CRITICAL \
+              --output /work/trivy-dockerfile-report.txt \
+          || echo "Trivy Config : vulnérabilités détectées, rapport généré."
+
+      # 6. Archive des rapports
       - name: Archivage des rapports
         uses: actions/upload-artifact@v4
         if: always()
@@ -69,4 +81,5 @@ jobs:
           path: |
             semgrep-human-report.txt
             trivy-sca-report.txt
+            trivy-dockerfile-report.txt
           retention-days: 30
