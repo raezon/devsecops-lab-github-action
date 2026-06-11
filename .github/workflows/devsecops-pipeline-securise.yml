@@ -120,6 +120,9 @@ jobs:
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 2 : Déploiement Staging & DAST (Nettoyé, ultra-rapide et local)
   # ════════════════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 2 : Déploiement Staging & DAST (Simplifié à 100% avec Docker Run)
+  # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
     name: "🔬 Staging & DAST (OWASP ZAP Local)"
     runs-on: ubuntu-22.04
@@ -134,10 +137,15 @@ jobs:
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
 
-      # ✅ Utilisation propre du docker-compose.yml à la racine
-      - name: Déployer l'environnement local avec Docker Compose
+      # ✅ Remplacement radical : Plus aucun docker-compose, on lance l'app en direct !
+      - name: Déployer l'environnement local avec Docker Run
         run: |
-          IMAGE_TAG=${{ github.sha }} IMAGE_NAME=${{ env.IMAGE_NAME }} docker compose up -d
+          # On démarre le conteneur en mode détaché sur le port 3000
+          docker run -d \
+            --name techflow-api \
+            -p 3000:3000 \
+            -e NODE_ENV=production \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
           
           echo "⌛ Attente active du démarrage de l'API..."
           for i in {1..10}; do
@@ -150,10 +158,10 @@ jobs:
           done
           
           echo "❌ CRASH DÉTECTÉ : L'API a refusé de démarrer. Extraction immédiate des logs :"
-          docker compose logs
+          docker logs techflow-api
           exit 1
 
-      # ✅ Supprime définitivement le problème de permissions pour ZAP
+      # ✅ Supprime les problèmes de permissions pour ZAP
       - name: 🔓 Fix permissions pour OWASP ZAP
         run: chmod -R 777 ${{ github.workspace }}
 
@@ -174,11 +182,10 @@ jobs:
             zap_report.html
             zap_report.md
 
-      # ✅ Nettoyage
+      # ✅ Nettoyage classique du conteneur unique
       - name: Stop Local Environment
         if: always()
-        run: docker compose down || true
-
+        run: docker rm -f techflow-api || true
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : QUALITY GATE (Le seul point de contrôle strict)
   # ════════════════════════════════════════════════════════════════════════════
