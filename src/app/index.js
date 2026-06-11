@@ -1,13 +1,14 @@
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
+const helmet = require("helmet");
 const config = require("./config");
 const usersRouter = require("../api/users");
 
 const app = express();
 
 // =============================================================================
-// SECURE : Définition d'une allowlist d'origines au lieu du joker *
+// 1. MIDDLEWARES DE SÉCURITÉ ET CONFIGURATION
 // =============================================================================
 const allowedOrigins = ['https://app.techflow.io', 'http://localhost:3000'];
 app.use(cors({
@@ -20,63 +21,78 @@ app.use(cors({
   }
 }));
 
-// SECURE : Format de log personnalisé pour ne JAMAIS enregistrer les headers Authorization
 app.use(morgan(":method :url :status :res[content-length] - :response-time ms"));
-
-// SECURE : Limite de payload raisonnable pour éviter les attaques DoS (1mb max au lieu de 50mb)
 app.use(express.json({ limit: "1mb" }));
 
-// =============================================================================
-// SECURE : Activation des en-têtes de sécurité de base avec Helmet
-// =============================================================================
-const helmet = require('helmet');
+// HELMET : Appliqué ici, il sécurise TOUTES les routes, incluant les fichiers statiques du dossier 'public'
 app.use(helmet());
 
 // =============================================================================
-// Routes requises pour OWASP ZAP & Docker
+// 2. FICHIERS STATIQUES (robots.txt, sitemap.xml)
 // =============================================================================
+// Placé avant les routes pour que ZAP les trouve en priorité
+app.use(express.static('public'));
 
-// ✅ ROUTE INDEX : Indispensable pour l'audit initial de ZAP (évite la 404 au démarrage du scan)
+// =============================================================================
+// 3. ROUTES STANDARD & HEALTHCHECK
+// =============================================================================
 app.get("/", (req, res) => {
-  res.json({
-    message: "Bienvenue sur l'API TechFlow SAS",
-    documentation: "/api/docs" // Optionnel, indique à ZAP où chercher les routes
-  });
+  res.json({ message: "Bienvenue sur l'API TechFlow SAS", documentation: "/api/docs" });
 });
 
-// ✅ ENDPOINT HEALTHCHECK NETTOYÉ : Valide pour ZAP et Docker, sécurisé pour la prod
 app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    env: config.app.env // On affiche uniquement l'environnement global (staging/production)
-  });
+  res.status(200).json({ status: "ok", env: config.app.env });
 });
 
-// Routes applicatives
 app.use("/api/users", usersRouter);
 
 // =============================================================================
-// Gestionnaire d'erreurs global sécurisé
+// 4. ROUTES DE TESTS (Vulnérabilités intentionnelles pour ZAP)
+// =============================================================================
+
+// Injection SQL
+app.get("/api/vulnerable/search", (req, res) => {
+  const userId = req.query.id;
+  const query = "SELECT * FROM users WHERE id = " + userId; 
+  res.send(`Requête exécutée : ${query}`);
+});
+
+// Reflected XSS
+app.get("/api/vulnerable/hello", (req, res) => {
+  const name = req.query.name || "Inconnu";
+  res.send("<h1>Bonjour " + name + "</h1>");
+});
+
+// Fuite d'information
+app.get("/api/vulnerable/debug", (req, res) => {
+  throw new Error("Erreur critique : échec de connexion à la base de données root@localhost:5432");
+});
+
+// Path Traversal (Attention : usage pédagogique uniquement)
+app.get("/api/vulnerable/download", (req, res) => {
+  const file = req.query.file;
+  res.sendFile(__dirname + "/../public/" + file); 
+});
+
+// =============================================================================
+// 5. GESTIONNAIRE D'ERREURS GLOBAL (Doit être en dernier)
 // =============================================================================
 app.use((err, req, res, next) => {
-  console.error(err.stack); // On garde les logs détaillés côté serveur uniquement
-  
+  console.error(err.stack);
   const response = { error: "Une erreur interne est survenue" };
   
-  // On n'affiche le message d'erreur d'origine QU'EN mode développement, jamais en staging/prod
   if (config.app.env === "development") {
     response.message = err.message;
     response.stack = err.stack;
   }
-
   res.status(500).json(response);
 });
 
-// Démarrage de l'application
+// =============================================================================
+// 6. DÉMARRAGE
+// =============================================================================
 app.listen(config.app.port, () => {
-  console.log(`TechFlow API démarrée sur le port ${config.app.port}`);
-  console.log(`Mode : ${config.app.env}`);
-  // SECURE : Plus aucune fuite de secrets ou de mots de passe de base de données dans les fichiers de logs au démarrage
+  console.log(`TechFlow API démarrée sur le port ${config.app.port} en mode ${config.app.env}`);
 });
 
 module.exports = app;
