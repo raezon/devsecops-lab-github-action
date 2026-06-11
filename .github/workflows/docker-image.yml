@@ -1,0 +1,77 @@
+name: "DevSecOps Module 1 — SAST + SCA"
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  NODE_VERSION: "20.11.0"
+
+jobs:
+  sast-and-sca:
+    name: "SAST (Semgrep) + SCA (Trivy)"
+    runs-on: ubuntu-22.04
+    steps:
+
+      # 1. Cloner le repo
+      - uses: actions/checkout@v4
+
+      # 2. Cache des outils
+      - name: Cache Trivy DB + Semgrep Rules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/trivy
+            ~/.cache/semgrep
+          key: ${{ runner.os }}-security-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-security-
+
+      # 3. SAST — Analyse statique du code (Semgrep)
+      - name: SAST — Semgrep OSS
+        run: |
+          docker run --rm \
+            -v ~/.cache/semgrep:/workspace/.cache/semgrep \
+            -v "${{ github.workspace }}:/src" \
+            returntocorp/semgrep semgrep ci \
+              --config=p/javascript \
+              --config=p/nodejs \
+              --config=p/owasp-top-ten \
+              --config=p/secrets \
+              --text --output=/src/semgrep-human-report.txt \
+          || echo "Semgrep : alertes détectées."
+
+      # 4. SCA (Dépendances) + IaC (Dockerfile) — Scan fusionné
+      - name: SCA + IaC — Trivy All-in-One Scan
+        run: |
+          docker run --rm \
+            -v ~/.cache/trivy:/root/.cache/trivy \
+            -v "${{ github.workspace }}:/racine" \
+            aquasec/trivy:latest fs /racine \
+              --scanners vuln,config \
+              --format table \
+              --severity HIGH,CRITICAL \
+              --output /racine/trivy-security-report.txt \
+          || echo "Trivy : vulnérabilités détectées."
+
+      # 5. Debug — Vérification des fichiers (optionnel)
+      - name: Debug — Lister les fichiers générés
+        run: ls -l semgrep-human-report.txt trivy-security-report.txt
+        if: always()
+
+      # 6. Archive des rapports
+      - name: Archivage des rapports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: module1-security-reports
+          path: |
+            semgrep-human-report.txt
+            trivy-security-report.txt
+          retention-days: 30
