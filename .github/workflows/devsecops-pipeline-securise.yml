@@ -73,6 +73,9 @@ jobs:
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : Analyse SCA & Conteneur (Trivy au format HTML Lisible)
   # ════════════════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 3 : Analyse SCA & Conteneur (Trivy au format HTML/MD Solide)
+  # ════════════════════════════════════════════════════════════════════════════
   security-scans:
     name: "📦 Étape 3 : SCA Local (Trivy HTML)"
     runs-on: ubuntu-22.04
@@ -80,27 +83,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # On utilise le template HTML natif de Trivy pour un rendu visuel parfait
-      - name: Trivy SCA — Scan du package.json (Format HTML)
+      # SCA LOCAL : Analyse du package.json (Format Table texte lisible)
+      - name: Trivy SCA — Scan du package.json (Dépendances)
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
-          format: 'template'
-          template: '@contrib/html.tpl'
-          output: 'trivy-sca-report.html'
+          format: 'table' # Sortie ultra lisible directement dans les logs si besoin
+          output: 'trivy-sca-report.txt'
           severity: 'HIGH,CRITICAL'
 
-      - name: Trivy — Scan de l'image Docker (Format HTML)
+      # CONTAINER SCAN LOCAL : Utilisation du format GitHub Markdown natif de Trivy (aucun fichier tpl externe requis)
+      - name: Trivy — Scan de l'image Docker (Format Markdown Lisible)
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
           format: 'template'
-          template: '@contrib/html.tpl'
-          output: 'trivy-image-report.html'
+          template: '__builtin___markdown' # Utilise le template de secours directement packagé dans Trivy
+          output: 'trivy-image-report.md'
           severity: 'HIGH,CRITICAL'
 
-      # Export JSON masqué pour le script de Quality Gate automatique en fin de pipeline
+      # Export JSON technique indispensable pour le script de Quality Gate (Étape 6)
       - name: Trivy — Export JSON technique pour le Quality Gate
         uses: aquasecurity/trivy-action@v0.20.0
         with:
@@ -109,14 +112,14 @@ jobs:
           output: 'trivy-image-results.json'
           severity: 'HIGH,CRITICAL'
 
-      - name: 💾 [Artéfact] Téléverser Rapports Trivy (HTML Ouvrable sur Navigateur)
+      - name: 💾 [Artéfact] Téléverser Rapports Trivy (Lisibles)
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-trivy-html-reports
           path: |
-            trivy-sca-report.html
-            trivy-image-report.html
+            trivy-sca-report.txt
+            trivy-image-report.md
             trivy-image-results.json
 
   # ════════════════════════════════════════════════════════════════════════════
