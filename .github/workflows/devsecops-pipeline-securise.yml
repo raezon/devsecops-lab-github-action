@@ -120,8 +120,11 @@ jobs:
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 2 : Déploiement Staging & DAST (S'exécute QUOI QU'IL ARRIVE)
   # ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 2 : Déploiement Staging & DAST (Nettoyé, ultra-rapide et local)
+  # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
-    name: "🔬 Staging & DAST (OWASP ZAP)"
+    name: "🔬 Staging & DAST (OWASP ZAP Local)"
     runs-on: ubuntu-22.04
     needs: build-and-scan
     if: always()
@@ -134,30 +137,21 @@ jobs:
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Build de secours appliqué"
 
-      - name: Déployer l'environnement Staging
+      - name: Déployer l'environnement Staging en Local
         run: |
           IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.staging.yml up -d || echo "Docker-compose déjà démarré ou géré"
-          sleep 15
-
-      - name: 🌐 Start ngrok tunnel (CLI)
-        id: ngrok
-        continue-on-error: true
-        run: |
-          curl -s https://bin.equinox.io/c/bNyj1m7e879/ngrok-v3-stable-linux-amd64.tgz | tar xz
-          sudo mv ngrok /usr/local/bin/
-          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          ngrok http 3000 --log=stdout > ngrok.log &
+          # Attente rapide pour s'assurer que l'API a démarré sur son port
           sleep 5
-          NGROK_URL=$(grep -oE "https://[a-zA-Z0-9.-]+\.ngrok-free.app" ngrok.log | head -n1)
-          echo "URL publique ngrok : $NGROK_URL"
-          echo "ngrok_url=$NGROK_URL" >> $GITHUB_OUTPUT
 
-      - name: OWASP ZAP — Scan DAST
+      # 🎯 On attaque directement localhost sans aucun intermédiaire !
+      - name: OWASP ZAP — Scan DAST Local
         uses: zaproxy/action-baseline@v0.11.0
         with:
-          target: ${{ steps.ngrok.outputs.ngrok_url || 'http://localhost:3000' }}
+          target: 'http://localhost:3000'
           fail_action: false
           rules_file_name: ".zap-rules.tsv"
+          # On indique à ZAP d'utiliser le réseau de l'hôte pour joindre le localhost du runner
+          docker_name_args: '--network=host'
 
       - name: 💾 [Artéfact] Téléverser Rapport DAST (Lisible)
         uses: actions/upload-artifact@v4
@@ -171,7 +165,6 @@ jobs:
       - name: Stop Staging Environment
         if: always()
         run: docker compose -f docker-compose.staging.yml down || true
-
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : QUALITY GATE (Le seul point de contrôle strict)
   # ════════════════════════════════════════════════════════════════════════════
