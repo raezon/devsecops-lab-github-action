@@ -153,7 +153,7 @@ jobs:
           docker logs techflow-api
           exit 1
 
-      - name: 🔍 OWASP ZAP — Scan DAST (Mode Docker Direct)
+      - name: 🔍 OWASP ZAP — Scan DAST 
         run: |
           # On donne les droits d'écriture au dossier courant pour ZAP
           chmod -R 777 .
