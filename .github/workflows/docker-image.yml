@@ -47,30 +47,19 @@ jobs:
               --text --output=semgrep-human-report.txt \
           || echo "Semgrep : alertes détectées, rapport généré."
 
-      # 4. SCA — Scan des dépendances (package.json à la racine)
-      - name: SCA — Trivy Dépendances
+      # 4. SCA (Dépendances) + IaC (Dockerfile) — Scan fusionné
+      - name: SCA + IaC — Trivy All-in-One Scan
         run: |
+          # On lie la racine de ton repo au dossier /racine du conteneur
           docker run --rm \
             -v ~/.cache/trivy:/root/.cache/trivy \
-            -v "${{ github.workspace }}:/work" \
-            aquasec/trivy:latest fs /work \
-              --scanners vuln \
+            -v "${{ github.workspace }}:/racine" \
+            aquasec/trivy:latest fs /racine \
+              --scanners vuln,config \
               --format table \
               --severity HIGH,CRITICAL \
-              --output /work/trivy-sca-report.txt \
-          || echo "Trivy SCA : vulnérabilités détectées, rapport généré."
-
-      # 5. IaC — Scan du Dockerfile (à la racine)
-      - name: IaC — Trivy Config (Dockerfile)
-        run: |
-          docker run --rm \
-            -v ~/.cache/trivy:/root/.cache/trivy \
-            -v "${{ github.workspace }}:/work" \
-            aquasec/trivy:latest config /work/ \
-              --format table \
-              --severity HIGH,CRITICAL \
-              --output /work/trivy-dockerfile-report.txt \
-          || echo "Trivy Config : vulnérabilités détectées, rapport généré."
+              --output /racine/trivy-security-report.txt \
+          || echo "Trivy : vulnérabilités détectées."
 
       # 6. Archive des rapports
       - name: Archivage des rapports
