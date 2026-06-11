@@ -25,20 +25,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. SAST Local (Semgrep) - Écrit le rapport et continue toujours
+      # ⚡ CACHE : Configuration du cache partagé pour Trivy DB et Semgrep
+      - name: ⚡ Configuration du Cache pour les outils de Sécurité
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/trivy
+            ~/.cache/semgrep
+          key: ${{ runner.os }}-security-caches-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-security-caches-
+
+      # 1. SAST Local (Semgrep) - Utilise le dossier de cache local
       - name: 🔍 Semgrep OSS Scan
         run: |
-          docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep ci \
+          docker run --rm -v ~/.cache/semgrep:/workspace/.cache/semgrep -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep ci \
             --config=p/javascript \
             --config=p/nodejs \
             --config=p/owasp-top-ten \
             --config=p/secrets \
             --text --output=semgrep-human-report.txt || echo "Scans Semgrep complétés avec des alertes."
 
-      # 2. SCA Local (Trivy Containerisé) - Évite l'erreur fatale du lock file manquant
+      # 2. SCA Local (Trivy Containerisé) - Utilise le cache Trivy DB pour éviter les téléchargements lourds
       - name: 📦 Trivy SCA — Scan du Code Source
         run: |
-          docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy:latest fs /src \
+          docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest fs /src \
             --format table \
             --severity HIGH,CRITICAL \
             --output /src/trivy-sca-report.txt || echo "SCA complété (Certains fichiers de lock ou répertoires ont été sautés)."
@@ -72,7 +83,7 @@ jobs:
           output: 'trivy-image-results.json'
           severity: 'HIGH,CRITICAL'
 
-      # 6. Tests unitaires & Couverture
+      # 6. Tests unitaires & Couverture (Géré par le cache natif npm)
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -99,14 +110,11 @@ jobs:
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 2 : Déploiement Staging & DAST (S'exécute QUOI QU'IL ARRIVE)
   # ════════════════════════════════════════════════════════════════════════════
-# ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 2 : Déploiement Staging & DAST (S'exécute QUOI QU'IL ARRIVE)
-  # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
     name: "🔬 Staging & DAST (OWASP ZAP)"
     runs-on: ubuntu-22.04
     needs: build-and-scan
-    if: always() # 🔥 Force l'exécution même si l'étape précédente affiche du rouge
+    if: always()
     environment: staging
     steps:
       - uses: actions/checkout@v4
@@ -121,19 +129,25 @@ jobs:
           IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.staging.yml up -d || echo "Docker-compose déjà démarré ou géré"
           sleep 15
 
-      - name: Start ngrok tunnel
+      # 🌐 Plus besoin de l'action GitHub instable, installation directe via CLI en Bash
+      - name: 🌐 Start ngrok tunnel (CLI)
         id: ngrok
         continue-on-error: true
-        uses: ngrok/actions@v2     # ✅ Correction ici : Utilisation de l'action officielle à jour
-        with:
-          ngrok_auth_token: ${{ secrets.NGROK_AUTH_TOKEN }}
-          port: "3000"
+        run: |
+          curl -s https://bin.equinox.io/c/bNyj1m7e879/ngrok-v3-stable-linux-amd64.tgz | tar xz
+          sudo mv ngrok /usr/local/bin/
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          ngrok http 3000 --log=stdout > ngrok.log &
+          sleep 5
+          NGROK_URL=$(grep -oE "https://[a-zA-Z0-9.-]+\.ngrok-free.app" ngrok.log | head -n1)
+          echo "URL publique ngrok : $NGROK_URL"
+          echo "ngrok_url=$NGROK_URL" >> $GITHUB_OUTPUT
 
       - name: OWASP ZAP — Scan DAST
         uses: zaproxy/action-baseline@v0.11.0
         with:
           target: ${{ steps.ngrok.outputs.ngrok_url || 'http://localhost:3000' }}
-          fail_action: false # Pas de blocage ici, le rapport se génère tranquillement
+          fail_action: false
           rules_file_name: ".zap-rules.tsv"
 
       - name: 💾 [Artéfact] Téléverser Rapport DAST (Lisible)
@@ -148,6 +162,7 @@ jobs:
       - name: Stop Staging Environment
         if: always()
         run: docker compose -f docker-compose.staging.yml down || true
+
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : QUALITY GATE (Le seul point de contrôle strict)
   # ════════════════════════════════════════════════════════════════════════════
@@ -155,7 +170,7 @@ jobs:
     name: "🛡️ Évaluation du Quality Gate"
     runs-on: ubuntu-22.04
     needs: staging-and-dast
-    if: always() # 🔥 On passe par la validation de sécurité finale en fin de chaîne
+    if: always()
     steps:
       - name: Récupérer le rapport JSON Trivy
         uses: actions/download-artifact@v4
@@ -166,7 +181,6 @@ jobs:
 
       - name: Vérifier le seuil des failles (> 1)
         run: |
-          # Si l'image n'a pas pu être construite du tout, le JSON n'existe pas -> On bloque la prod
           if [ ! -f trivy-image-results.json ]; then
             echo "❌ ÉCHEC CRITIQUE : Rapport de vulnérabilités introuvable. Sécurité compromise."
             exit 1
@@ -192,7 +206,6 @@ jobs:
     name: "🚀 Déploiement Production"
     runs-on: ubuntu-22.04
     needs: quality-gate
-    # Pas de if: always() ici. Si le Quality Gate fait un exit 1, ce job est annulé de facto.
     environment:
       name: production
       url: https://api.techflow.io
