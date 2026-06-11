@@ -17,94 +17,53 @@ env:
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 1 : Analyse statique (SAST Local en format Humain)
+  # ÉTAPE 1 : Intégration, Scans (SAST/SCA) & Tests Globaux
   # ════════════════════════════════════════════════════════════════════════════
-  sast:
-    name: "🔍 Étape 1 : SAST Local (Semgrep OSS)"
+  build-and-scan:
+    name: "🛠️ Build, Tests & Scans de Sécurité"
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      # Génération d'un fichier texte/markdown lisible en plus du SARIF standard
-      - name: Semgrep OSS Scan
+      # 1. SAST Local (Semgrep)
+      - name: 🔍 Semgrep OSS Scan
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep ci \
             --config=p/javascript \
             --config=p/nodejs \
             --config=p/owasp-top-ten \
             --config=p/secrets \
-            --text --output=semgrep-human-report.txt || echo "Scans terminés avec des correspondances."
+            --text --output=semgrep-human-report.txt || echo "Scans Semgrep complétés."
 
-      - name: 💾 [Artéfact] Téléverser Rapport SAST Semgrep (Lisible)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sast-semgrep-human-report
-          path: semgrep-human-report.txt
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 2 : Build de l'image Docker
-  # ════════════════════════════════════════════════════════════════════════════
-  build-docker:
-    name: "🐳 Étape 2 : Build Image Docker"
-    runs-on: ubuntu-22.04
-    needs: sast
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build image Docker depuis docker/
-        run: |
-          docker build \
-            -f docker/Dockerfile \
-            -t ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --iidfile image-id.txt \
-            .
-
-      - name: 💾 [Artéfact] Sauvegarder ID de l'image
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: docker-build-metadata
-          path: image-id.txt
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 3 : Analyse SCA & Conteneur (Trivy au format HTML Lisible)
-  # ════════════════════════════════════════════════════════════════════════════
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 3 : Analyse SCA & Conteneur (Trivy au format HTML/MD Solide)
-  # ════════════════════════════════════════════════════════════════════════════
-  security-scans:
-    name: "📦 Étape 3 : SCA Local (Trivy HTML)"
-    runs-on: ubuntu-22.04
-    needs: build-docker
-    steps:
-      - uses: actions/checkout@v4
-
-      # SCA LOCAL : Analyse du package.json (Format Table texte lisible)
-      - name: Trivy SCA — Scan du package.json (Dépendances)
+      # 2. SCA Local (Trivy Dépendances)
+      - name: 📦 Trivy SCA — Scan du package.json
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
-          format: 'table' # Sortie ultra lisible directement dans les logs si besoin
+          format: 'table'
           output: 'trivy-sca-report.txt'
           severity: 'HIGH,CRITICAL'
 
-      # CONTAINER SCAN LOCAL : Utilisation du format GitHub Markdown natif de Trivy (aucun fichier tpl externe requis)
-      - name: Trivy — Scan de l'image Docker (Format Markdown Lisible)
+      # 3. Build Image Docker local
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐳 Build Image Docker
+        run: |
+          docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      # 4. Container Scan Local (Trivy Image) - Format Lisible (MD) + Technique (JSON)
+      - name: 🐳 Trivy — Scan de l'image Docker (Markdown)
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
           format: 'template'
-          template: '__builtin___markdown' # Utilise le template de secours directement packagé dans Trivy
+          template: '__builtin___markdown'
           output: 'trivy-image-report.md'
           severity: 'HIGH,CRITICAL'
 
-      # Export JSON technique indispensable pour le script de Quality Gate (Étape 6)
-      - name: Trivy — Export JSON technique pour le Quality Gate
+      - name: 💾 Trivy — Export JSON pour le Quality Gate final
         uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
@@ -112,55 +71,46 @@ jobs:
           output: 'trivy-image-results.json'
           severity: 'HIGH,CRITICAL'
 
-      - name: 💾 [Artéfact] Téléverser Rapports Trivy (Lisibles)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: security-trivy-html-reports
-          path: |
-            trivy-sca-report.txt
-            trivy-image-report.md
-            trivy-image-results.json
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 4 : Tests unitaires localisés (Rapport de Couverture)
-  # ════════════════════════════════════════════════════════════════════════════
-  unit-tests:
-    name: "🧪 Étape 4 : Tests Unitaires & Couverture"
-    runs-on: ubuntu-22.04
-    needs: security-scans
-    steps:
-      - uses: actions/checkout@v4
-      
+      # 5. Tests unitaires & Couverture
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           
-      - run: npm ci
-      - run: npm test -- --coverage
-      
-      - name: 💾 [Artéfact] Téléverser Rapport de Couverture HTML (Lisible)
+      - name: 🧪 Exécution des Tests
+        run: |
+          npm ci
+          npm test -- --coverage
+
+      # 6. Téléversement groupé de TOUS les artefacts lisibles de cette étape
+      - name: 💾 [Artéfact] Archivage des rapports d'analyse
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: unit-tests-coverage-report
-          path: coverage/
+          name: security-and-tests-reports
+          path: |
+            semgrep-human-report.txt
+            trivy-sca-report.txt
+            trivy-image-report.md
+            trivy-image-results.json
+            coverage/
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 5 : Déploiement Staging (Docker Compose) + DAST (OWASP ZAP HTML)
+  # ÉTAPE 2 : Déploiement Staging & DAST (Dynamique)
   # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
-    name: "🔬 Étape 5 : Staging & DAST"
+    name: "🔬 Staging & DAST (OWASP ZAP)"
     runs-on: ubuntu-22.04
-    needs: unit-tests
+    needs: build-and-scan
     environment: staging
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
+      - name: Log in to GHCR et Build local pour Staging
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          # On build l'image à la volée sur ce runner pour le conteneur de test local
+          docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
 
       - name: Déployer l'environnement Staging
         run: |
@@ -174,14 +124,14 @@ jobs:
           ngrok_auth_token: ${{ secrets.NGROK_AUTH_TOKEN }}
           port: "3000"
 
-      - name: OWASP ZAP — Scan DAST (Génère HTML/MD par défaut)
+      - name: OWASP ZAP — Scan DAST
         uses: zaproxy/action-baseline@v0.11.0
         with:
           target: ${{ steps.ngrok.outputs.ngrok_url }}
-          fail_action: false # On ne fait pas planter ici, on laisse le Quality Gate décider à la fin
+          fail_action: false # On ne fait pas planter ici
           rules_file_name: ".zap-rules.tsv"
 
-      - name: 💾 [Artéfact] Téléverser Rapport OWASP ZAP DAST (Lisible)
+      - name: 💾 [Artéfact] Téléverser Rapport DAST (Lisible)
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -195,40 +145,39 @@ jobs:
         run: docker compose -f docker-compose.staging.yml down
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 6 : QUALITY GATE (Analyse tous les rapports accumulés)
+  # ÉTAPE 3 : QUALITY GATE (Décision finale basée sur le JSON de l'étape 1)
   # ════════════════════════════════════════════════════════════════════════════
   quality-gate:
-    name: "🛡️ Étape 6 : Quality Gate Evaluation"
+    name: "🛡️ Évaluation du Quality Gate"
     runs-on: ubuntu-22.04
     needs: staging-and-dast
     steps:
-      - name: Récupérer les métadonnées et rapports Trivy sauvegardés
+      - name: Récupérer le rapport JSON Trivy
         uses: actions/download-artifact@v4
         with:
-          name: security-trivy-html-reports
+          name: security-and-tests-reports
           path: .
 
-      - name: Analyser le nombre de vulnérabilités (Seuil > 1)
+      - name: Vérifier le seuil des failles (> 1)
         run: |
-          # Extraction du nombre total de vulnérabilités High et Critical depuis le JSON
           VULN_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH" or .Severity=="CRITICAL")] | length' trivy-image-results.json || echo "0")
           echo "═════════════════════════════════════════════════"
           echo "⚠️ NOMBRE DE VULNÉRABILITÉS CRITIQUES/HAUTES : $VULN_COUNT"
           echo "═════════════════════════════════════════════════"
           
           if [ "$VULN_COUNT" -gt 1 ]; then
-            echo "❌ ÉCHEC DU QUALITY GATE : Plus de 1 faille critique détectée ($VULN_COUNT trouvées)."
-            echo "Le déploiement en production est bloqué pour protéger l'infrastructure."
+            echo "❌ ÉCHEC : Plus de 1 faille critique détectée ($VULN_COUNT trouvées)."
+            echo "Le déploiement en production est annulé."
             exit 1
           else
-            echo "✅ QUALITY GATE VALIDE : $VULN_COUNT faille(s) détectée(s). Autorisation de déploiement."
+            echo "✅ QUALITY GATE VALIDE ($VULN_COUNT failles). Autorisation de déploiement."
           fi
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 7 : Déploiement Production (S'exécute UNIQUEMENT si l'Étape 6 est ✅)
+  # ÉTAPE 4 : Déploiement Production (S'exécute UNIQUEMENT si le Gate est ✅)
   # ════════════════════════════════════════════════════════════════════════════
   deploy-production:
-    name: "🚀 Étape 7 : Production Docker Compose"
+    name: "🚀 Déploiement Production"
     runs-on: ubuntu-22.04
     needs: quality-gate
     environment:
@@ -237,12 +186,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR et Push final
+      - name: Connexion au Registre & Push de l'image validée
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker pull ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # On build une dernière fois pour l'envoyer de manière permanente sur GHCR
+          docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-      - name: Deploy via Docker Compose en Production
+      - name: Deploy final
         run: |
-          echo "🚀 Quality gate respecté. Déploiement en cours sur la machine de production..."
-          # IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml up -d
+          echo "🚀 Image poussée sur GHCR avec succès et disponible pour le serveur de Production !"
