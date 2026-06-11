@@ -1,0 +1,49 @@
+# .gitleaks.toml
+# =============================================================================
+# Configuration Gitleaks pour scanner le dépôt TechFlow SAS
+# Utilisé dans le TP pour démontrer la détection de secrets
+#
+# Usage : gitleaks detect --config .gitleaks.toml --source . -v
+# =============================================================================
+
+title = "TechFlow SAS - Configuration Gitleaks DevSecOps TP"
+
+[extend]
+# Utilise les règles par défaut de Gitleaks (OWASP, CWE-798)
+useDefault = true
+
+[[rules]]
+id = "techflow-aws-key"
+description = "Clé AWS Access Key TechFlow"
+regex = '''AKIA[0-9A-Z]{16}'''
+tags = ["aws", "secret", "techflow"]
+
+[[rules]]
+id = "techflow-jwt-secret"
+description = "Secret JWT hardcodé TechFlow"
+regex = '''(?i)(jwt[_-]?secret|jwt[_-]?key)\s*[=:]\s*["\']?[a-zA-Z0-9]+'''
+tags = ["jwt", "secret", "techflow"]
+
+[[rules]]
+id = "techflow-db-password"
+description = "Mot de passe base de données TechFlow"
+regex = '''(?i)(db[_-]?password|database[_-]?password|postgres[_-]?password)\s*[=:]\s*["\']?[^\s"\']{8,}'''
+tags = ["database", "password", "techflow"]
+
+[[rules]]
+id = "techflow-stripe-live"
+description = "Clé API Stripe live"
+regex = '''sk_live_[0-9a-zA-Z]{24,}'''
+tags = ["stripe", "payment", "critical"]
+
+[allowlist]
+# Autoriser les fichiers de documentation et commentaires TP
+paths = [
+  "README.md",
+  "docs/",
+]
+# Autoriser les clés AWS d'exemple officielles Amazon
+regexes = [
+  "AKIAIOSFODNN7EXAMPLE",
+  "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+]

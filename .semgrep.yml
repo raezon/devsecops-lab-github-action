@@ -1,0 +1,71 @@
+# .semgrep.yml
+# =============================================================================
+# Configuration Semgrep SAST pour TechFlow SAS
+# Utilisé dans le TP pour démontrer la détection de vulnérabilités applicatives
+#
+# Usage : semgrep --config .semgrep.yml src/
+# =============================================================================
+
+rules:
+  # ── Injection SQL ────────────────────────────────────────────────────────
+  - id: techflow-sql-injection
+    patterns:
+      - pattern: |
+          $POOL.query("..." + $USER_INPUT)
+      - pattern: |
+          $POOL.query(`...${$USER_INPUT}...`)
+    message: |
+      ⚠️ INJECTION SQL DÉTECTÉE : La variable $USER_INPUT est concaténée
+      directement dans la requête SQL. Utilisez des requêtes paramétrées :
+      pool.query('SELECT ... WHERE id = $1', [userId])
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021 – Injection"
+      fix: "Utiliser des requêtes paramétrées avec $1, $2, etc."
+
+  # ── Secrets hardcodés ────────────────────────────────────────────────────
+  - id: techflow-hardcoded-jwt-secret
+    patterns:
+      - pattern: |
+          const $VAR = "...secret...";
+      - pattern: |
+          jwt.sign($PAYLOAD, "...", ...)
+    message: |
+      ⚠️ SECRET JWT HARDCODÉ : Ne jamais coder en dur un secret JWT.
+      Utiliser process.env.JWT_SECRET chargé depuis Vault.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021 – Cryptographic Failures"
+
+  # ── Stack trace exposé ───────────────────────────────────────────────────
+  - id: techflow-stack-trace-exposure
+    patterns:
+      - pattern: |
+          res.json({ ..., stack: $ERR.stack, ... })
+      - pattern: |
+          res.send($ERR.stack)
+    message: |
+      ⚠️ EXPOSITION DU STACK TRACE : Ne jamais retourner err.stack
+      dans les réponses API. Logger côté serveur uniquement.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-209"
+      owasp: "A05:2021 – Security Misconfiguration"
+
+  # ── CORS wildcard ─────────────────────────────────────────────────────────
+  - id: techflow-cors-wildcard
+    pattern: |
+      cors({ origin: "*" })
+    message: |
+      ⚠️ CORS WILDCARD : origin: "*" autorise toutes les origines.
+      Définir une liste d'origines autorisées explicite.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-942"
+      owasp: "A05:2021 – Security Misconfiguration"

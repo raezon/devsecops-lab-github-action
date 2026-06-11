@@ -1,0 +1,52 @@
+
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3000:3000"   # ⚠️ VULN : exposé sur toutes les interfaces (0.0.0.0)
+    environment:
+      # ⚠️ VULN : secrets en clair dans docker-compose (versionné dans Git)
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PASSWORD: Sup3rS3cr3tDB!2024
+      JWT_SECRET: techflow2024secret
+      AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+      AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+      STRIPE_SECRET_KEY: sk_live_51AbCdEfGhIjKlMnOpQrStUv
+    depends_on:
+      - postgres
+      - redis
+    # ⚠️ VULN : pas de limite de ressources (DoS possible)
+    # ⚠️ VULN : pas de restart policy robuste
+
+  postgres:
+    image: postgres:latest   # ⚠️ VULN : image non épinglée
+    environment:
+      POSTGRES_PASSWORD: Sup3rS3cr3tDB!2024  # ⚠️ VULN : secret en clair
+      POSTGRES_USER: techflow_admin
+      POSTGRES_DB: techflow_prod
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"  # ⚠️ VULN : PostgreSQL exposé publiquement !
+
+  redis:
+    image: redis:latest  # ⚠️ VULN : image non épinglée, pas d'auth
+    ports:
+      - "6379:6379"  # ⚠️ VULN : Redis exposé sans authentification
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@techflow.io
+      PGADMIN_DEFAULT_PASSWORD: admin123  # ⚠️ VULN : mot de passe trivial
+    ports:
+      - "5050:80"  # ⚠️ VULN : interface d'admin exposée publiquement
+
+volumes:
+  postgres_data:

@@ -1,0 +1,72 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: techflow-api
+  namespace: production
+  labels:
+    app: techflow-api
+    version: latest
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: techflow-api
+  template:
+    metadata:
+      labels:
+        app: techflow-api
+    spec:
+      # ⚠️ VULN : ServiceAccount par défaut (trop de permissions)
+      # serviceAccountName: techflow-api-sa  # ← non configuré
+
+      containers:
+        - name: api
+          # ⚠️ VULN : image non épinglée
+          image: registry.gitlab.com/techflow/api:latest
+
+          ports:
+            - containerPort: 3000
+
+          # ⚠️ VULN : secrets en clair dans les env vars du manifest
+          # (devrait utiliser External Secrets Operator + Vault)
+          env:
+            - name: DB_PASSWORD
+              value: "Sup3rS3cr3tDB!2024"          # ← SECRET EN CLAIR
+            - name: JWT_SECRET
+              value: "techflow2024secret"            # ← SECRET EN CLAIR
+            - name: AWS_ACCESS_KEY_ID
+              value: "AKIAIOSFODNN7EXAMPLE"          # ← SECRET EN CLAIR
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # ← SECRET EN CLAIR
+
+          # ⚠️ VULN : pas de securityContext (tourne en root, uid=0)
+          # securityContext:   ← absent intentionnellement
+
+          # ⚠️ VULN : pas de limites de ressources
+          # resources:   ← absent intentionnellement
+
+          # ⚠️ VULN : pas de probes (pas de détection de pannes)
+          # readinessProbe:  ← absent
+          # livenessProbe:   ← absent
+
+---
+# ⚠️ VULN : Service de type LoadBalancer exposant l'API directement
+apiVersion: v1
+kind: Service
+metadata:
+  name: techflow-api-service
+  namespace: production
+spec:
+  selector:
+    app: techflow-api
+  ports:
+    - port: 80
+      targetPort: 3000
+  type: LoadBalancer  # ⚠️ VULN : exposé directement sans ingress/WAF
+
+---
+# ⚠️ VULN : Pas de NetworkPolicy → tous les pods communiquent entre eux
+# ⚠️ VULN : Pas de PodDisruptionBudget
+# ⚠️ VULN : Pas de RBAC pour le ServiceAccount de l'API
+

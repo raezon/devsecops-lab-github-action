@@ -1,0 +1,198 @@
+name: "DevSecOps Pipeline — TechFlow SAS (Sécurisé)"
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+# ✅ RÈGLE : Principe du moindre privilège par défaut
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/techflow/api
+  NODE_VERSION: "20.11.0"
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 1 : Scan de secrets
+  # ════════════════════════════════════════════════════════════════════════════
+  secrets-scan:
+    name: "🔐 Scan secrets (Gitleaks)"
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks — Scan secrets
+        uses: gitleaks/gitleaks-action@v2.3.7 # ✅ Version figée
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 2 : Analyse statique (SAST)
+  # ════════════════════════════════════════════════════════════════════════════
+  sast:
+    name: "🔍 SAST (Semgrep)"
+    runs-on: ubuntu-22.04
+    needs: secrets-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/javascript
+            p/nodejs
+            p/owasp-top-ten
+            p/secrets
+          auditOn: push
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 3 : Analyse des dépendances (SCA)
+  # ════════════════════════════════════════════════════════════════════════════
+  dependency-scan:
+    name: "📦 SCA (npm audit + Snyk)"
+    runs-on: ubuntu-22.04
+    needs: secrets-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+      - name: Snyk — Scan dépendances
+        uses: snyk/actions/node@v0.4.0 # ✅ Éviter @master
+        with:
+          args: --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 4 : Tests unitaires (Optimisé en parallèle du SAST/SCA)
+  # ════════════════════════════════════════════════════════════════════════════
+  unit-tests:
+    name: "🧪 Tests unitaires"
+    runs-on: ubuntu-22.04
+    needs: secrets-scan # ✅ Ne dépend plus de sast/dependency-scan pour aller plus vite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - run: npm test -- --coverage
+      - uses: codecov/codecov-action@v4 # ✅ Version mise à jour v3 -> v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # Désormais requis en v4+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 5 : Build et scan de l'image Docker
+  # ════════════════════════════════════════════════════════════════════════════
+  build-and-scan:
+    name: "🐳 Build + Trivy container scan"
+    runs-on: ubuntu-22.04
+    needs: [sast, dependency-scan, unit-tests] # ✅ S'assure que tout est au vert avant le build
+    permissions:
+      contents: read
+      security-events: write # ✅ Requis pour téléverser le rapport SARIF
+      id-token: write        # ✅ Requis pour Cosign OIDC si applicable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image Docker
+        run: |
+          docker build \
+            -f docker/Dockerfile \
+            -t ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            .
+
+      - name: Trivy — Scan vulnérabilités image
+        uses: aquasecurity/trivy-action@v0.20.0 # ✅ Version figée au lieu de @master
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+
+      - name: Upload résultats Trivy
+        uses: github/codeql-action/upload-sarif@v3 # ✅ v2 -> v3
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Sign image (Cosign)
+        run: |
+          cosign sign --key ${{ secrets.COSIGN_PRIVATE_KEY }} \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Push image
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 6 : Déploiement staging + DAST
+  # ════════════════════════════════════════════════════════════════════════════
+  staging-and-dast:
+    name: "🔬 Staging + DAST (OWASP ZAP)"
+    runs-on: ubuntu-22.04
+    needs: build-and-scan
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Déployer en staging
+        run: |
+          kubectl set image deployment/techflow-api \
+            api=${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n staging
+          kubectl rollout status deployment/techflow-api -n staging
+        env:
+          KUBECONFIG: ${{ secrets.KUBECONFIG_STAGING }}
+
+      - name: OWASP ZAP — Scan DAST
+        uses: zaproxy/action-baseline@v0.11.0 # ✅ Version mise à jour
+        with:
+          target: "https://staging-api.techflow.io"
+          fail_action: true
+          rules_file_name: ".zap-rules.tsv"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 7 : Approbation manuelle + déploiement production
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy-production:
+    name: "🚀 Production (manuel)"
+    runs-on: ubuntu-22.04
+    needs: staging-and-dast
+    environment:
+      name: production
+      url: https://api.techflow.io
+    steps:
+      - name: Verify image signature
+        run: |
+          cosign verify --key ${{ secrets.COSIGN_PUBLIC_KEY }} \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Deploy to production
+        run: |
+          kubectl set image deployment/techflow-api \
+            api=${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n production
+          kubectl rollout status deployment/techflow-api -n production
+        env:
+          KUBECONFIG: ${{ secrets.KUBECONFIG_PROD }}

@@ -1,0 +1,35 @@
+{
+  "name": "techflow-api",
+  "version": "2.3.1",
+  "description": "TechFlow SAS — API Backend (démo DevSecOps TP Chapitre 1)",
+  "main": "src/app/index.js",
+  "scripts": {
+    "start": "node src/app/index.js",
+    "dev": "nodemon src/app/index.js",
+    "test": "jest --coverage",
+    "test:unit": "jest tests/unit",
+    "test:integration": "jest tests/integration",
+    "lint": "eslint src/",
+    "audit": "npm audit"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "morgan": "^1.10.0",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.51.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1",
+    "supertest": "^6.3.3"
+  },
+  "_comment_vuln": [
+    "⚠️ Packages volontairement non mis à jour pour le TP SCA",
+    "⚠️ Pas de helmet (headers sécurité manquants)",
+    "⚠️ Pas de express-rate-limit",
+    "⚠️ Pas de joi/zod pour la validation des entrées",
+    "⚠️ Pas de bcrypt pour le hashage des mots de passe"
+  ]
+}

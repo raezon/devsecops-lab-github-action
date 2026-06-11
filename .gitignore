@@ -1,0 +1,45 @@
+# .gitignore — TechFlow SAS
+# =============================================================================
+# ⚠️  VULNÉRABILITÉ : .env non ignoré (seul .env.local est ignoré)
+# =============================================================================
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build
+dist/
+build/
+coverage/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# ⚠️ VULN : .env n'est PAS dans ce .gitignore
+# Seul .env.local et .env.production.local sont ignorés
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ✅ CE QUI DEVRAIT ÊTRE AJOUTÉ :
+# .env
+# .env.*
+# !.env.example     ← sauf le fichier d'exemple (sans vrais secrets)
+# secrets/
+# *.pem
+# *.key
+# kubeconfig
+# .kube/
