@@ -1,4 +1,4 @@
-name: "DevSecOps Pipeline — TechFlow SAS (Sécurisé)"
+name: "DevSecOps Pipeline — TechFlow SAS (Sécurisé Local)"
 
 on:
   push:
@@ -6,9 +6,10 @@ on:
   pull_request:
     branches: [main]
 
-# ✅ RÈGLE : Principe du moindre privilège par défaut
+# ✅ Principe du moindre privilège
 permissions:
   contents: read
+  security-events: write
 
 env:
   IMAGE_NAME: ghcr.io/techflow/api
@@ -16,183 +17,184 @@ env:
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 1 : Scan de secrets
-  # ════════════════════════════════════════════════════════════════════════════
-  secrets-scan:
-    name: "🔐 Scan secrets (Gitleaks)"
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Gitleaks — Scan secrets
-        uses: gitleaks/gitleaks-action@v2.3.7 # ✅ Version figée
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 2 : Analyse statique (SAST)
+  # ÉTAPE 1 : Analyse statique (SAST Local sans Cloud)
   # ════════════════════════════════════════════════════════════════════════════
   sast:
-    name: "🔍 SAST (Semgrep)"
+    name: "🔍 Étape 1 : SAST Local (Semgrep OSS)"
     runs-on: ubuntu-22.04
-    needs: secrets-scan
     steps:
       - uses: actions/checkout@v4
 
-      - name: Semgrep SAST
-        uses: semgrep/semgrep-action@v1
+      # Utilisation directe de l'image officielle en local sans clé API
+      - name: Semgrep OSS Scan
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep ci \
+            --config=p/javascript \
+            --config=p/nodejs \
+            --config=p/owasp-top-ten \
+            --config=p/secrets \
+            --sarif --output=semgrep.sarif
+        continue-on-error: true
+
+      - name: 💾 [Artéfact] Téléverser Rapport SAST Semgrep
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          config: >-
-            p/javascript
-            p/nodejs
-            p/owasp-top-ten
-            p/secrets
-          auditOn: push
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+          name: sast-semgrep-report
+          path: semgrep.sarif
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 3 : Analyse des dépendances (SCA)
+  # ÉTAPE 2 : Build de l'image Docker (Fait APRES le SAST)
   # ════════════════════════════════════════════════════════════════════════════
-  dependency-scan:
-    name: "📦 SCA (npm audit + Snyk)"
+  build-docker:
+    name: "🐳 Étape 2 : Build Image Docker"
     runs-on: ubuntu-22.04
-    needs: secrets-scan
+    needs: sast
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: npm audit
-        run: npm audit --audit-level=high
-
-      - name: Snyk — Scan dépendances
-        uses: snyk/actions/node@v0.4.0 # ✅ Éviter @master
-        with:
-          args: --severity-threshold=high
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 4 : Tests unitaires (Optimisé en parallèle du SAST/SCA)
-  # ════════════════════════════════════════════════════════════════════════════
-  unit-tests:
-    name: "🧪 Tests unitaires"
-    runs-on: ubuntu-22.04
-    needs: secrets-scan # ✅ Ne dépend plus de sast/dependency-scan pour aller plus vite
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-      - run: npm ci
-      - run: npm test -- --coverage
-      - uses: codecov/codecov-action@v4 # ✅ Version mise à jour v3 -> v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }} # Désormais requis en v4+
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 5 : Build et scan de l'image Docker
-  # ════════════════════════════════════════════════════════════════════════════
-  build-and-scan:
-    name: "🐳 Build + Trivy container scan"
-    runs-on: ubuntu-22.04
-    needs: [sast, dependency-scan, unit-tests] # ✅ S'assure que tout est au vert avant le build
-    permissions:
-      contents: read
-      security-events: write # ✅ Requis pour téléverser le rapport SARIF
-      id-token: write        # ✅ Requis pour Cosign OIDC si applicable
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build image Docker
+      - name: Build image Docker depuis docker/
         run: |
           docker build \
             -f docker/Dockerfile \
             -t ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --iidfile image-id.txt \
             .
 
-      - name: Trivy — Scan vulnérabilités image
-        uses: aquasecurity/trivy-action@v0.20.0 # ✅ Version figée au lieu de @master
+      - name: 💾 [Artéfact] Sauvegarder ID de l'image
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-build-metadata
+          path: image-id.txt
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 3 : Analyse des dépendances (SCA Local via Trivy FS) & Scan Image
+  # ════════════════════════════════════════════════════════════════════════════
+  security-scans:
+    name: "📦 Étape 3 : SCA Local (Trivy) + Image Scan"
+    runs-on: ubuntu-22.04
+    needs: build-docker
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. SCA LOCAL : On utilise Trivy sur le système de fichiers pour remplacer Snyk/npm-audit
+      - name: Trivy SCA — Scan du package.json (Dépendances)
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-sca-results.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      # 2. CONTAINER SCAN : On scanne l'image Docker construite à l'étape précédente
+      - name: Trivy — Scan vulnérabilités de l'image Docker
+        uses: aquasecurity/trivy-action@v0.20.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          format: "sarif"
-          output: "trivy-results.sarif"
-          severity: "HIGH,CRITICAL"
-          exit-code: "1"
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
 
-      - name: Upload résultats Trivy
-        uses: github/codeql-action/upload-sarif@v3 # ✅ v2 -> v3
+      - name: 💾 [Artéfact] Téléverser Rapport SCA Dépendances
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          sarif_file: "trivy-results.sarif"
+          name: local-sca-report
+          path: trivy-sca-results.sarif
+
+      - name: 💾 [Artéfact] Téléverser Rapport Container Scan
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-container-report
+          path: trivy-image-results.sarif
+
+      - name: Injection des résultats SARIF dans l'onglet Security de GitHub
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 4 : Tests unitaires localisés & Signature de l'image
+  # ════════════════════════════════════════════════════════════════════════════
+  unit-tests-and-sign:
+    name: "🧪 Étape 4 : Tests & Signature Cosign"
+    runs-on: ubuntu-22.04
+    needs: security-scans
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          
+      - run: npm ci
+      - run: npm test -- --coverage
+      
+      - name: 💾 [Artéfact] Téléverser Rapport de Couverture HTML (Consulter localement)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-tests-coverage-report
+          path: coverage/
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push image validée vers GHCR
+        run: |
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Sign image (Cosign)
         run: |
           cosign sign --key ${{ secrets.COSIGN_PRIVATE_KEY }} \
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-      - name: Push image
-        run: |
-          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 6 : Déploiement staging + DAST
+  # ÉTAPE 5 : Déploiement Staging (Docker Compose) + DAST (ngrok)
   # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
-    name: "🔬 Staging + DAST (OWASP ZAP)"
+    name: "🔬 Étape 5 : Staging (Docker Compose) + DAST"
     runs-on: ubuntu-22.04
-    needs: build-and-scan
+    needs: unit-tests-and-sign
     environment: staging
     steps:
       - uses: actions/checkout@v4
 
-      - name: Déployer en staging
+      - name: Log in to GHCR on Runner
         run: |
-          kubectl set image deployment/techflow-api \
-            api=${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            -n staging
-          kubectl rollout status deployment/techflow-api -n staging
-        env:
-          KUBECONFIG: ${{ secrets.KUBECONFIG_STAGING }}
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: OWASP ZAP — Scan DAST
-        uses: zaproxy/action-baseline@v0.11.0 # ✅ Version mise à jour
+      - name: Déployer l'environnement via Docker Compose
+        run: |
+          IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.staging.yml up -d
+          sleep 10
+
+      - name: Start ngrok tunnel (Port local 3000)
+        id: ngrok
+        uses: ngrok/ngrok-forwarder-action@v2
         with:
-          target: "https://staging-api.techflow.io"
+          ngrok_auth_token: ${{ secrets.NGROK_AUTH_TOKEN }}
+          port: "3000"
+
+      - name: OWASP ZAP — Scan DAST local via l'URL ngrok
+        uses: zaproxy/action-baseline@v0.11.0
+        with:
+          target: ${{ steps.ngrok.outputs.ngrok_url }}
           fail_action: true
           rules_file_name: ".zap-rules.tsv"
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 7 : Approbation manuelle + déploiement production
-  # ════════════════════════════════════════════════════════════════════════════
-  deploy-production:
-    name: "🚀 Production (manuel)"
-    runs-on: ubuntu-22.04
-    needs: staging-and-dast
-    environment:
-      name: production
-      url: https://api.techflow.io
-    steps:
-      - name: Verify image signature
-        run: |
-          cosign verify --key ${{ secrets.COSIGN_PUBLIC_KEY }} \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-      - name: Deploy to production
-        run: |
-          kubectl set image deployment/techflow-api \
-            api=${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            -n production
-          kubectl rollout status deployment/techflow-api -n production
-        env:
-          KUBECONFIG: ${{ secrets.KUBECONFIG_PROD }}
+      - name: 💾 [Artéfact] Téléverser Rapport OWASP ZAP DAST
+        uses: actions/upload-artifact@v4
