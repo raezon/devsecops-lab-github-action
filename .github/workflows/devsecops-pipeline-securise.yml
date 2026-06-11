@@ -172,8 +172,9 @@ jobs:
           fail_action: false
           rules_file_name: ".zap-rules.tsv"
           docker_name_args: '--network=host'
-          # ✅ FIX : Empêche ZAP de tenter de créer une Issue GitHub (ce qui causait le crash)
           allow_issue_writing: false
+          # On essaie de forcer le nom de l'artéfact à quelque chose de valide
+          artifact_name: zapreport
 
       - name: 💾 [Artéfact] Téléverser Rapport DAST (Lisible)
         uses: actions/upload-artifact@v4
