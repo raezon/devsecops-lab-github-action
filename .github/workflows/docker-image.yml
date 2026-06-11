@@ -38,7 +38,7 @@ jobs:
         run: |
           docker run --rm \
             -v ~/.cache/semgrep:/workspace/.cache/semgrep \
-            -v "${{ github.workspace }}:/src" \
+            -v "${{ github.workspace }}:/racine" \
             returntocorp/semgrep semgrep ci \
               --config=p/javascript \
               --config=p/nodejs \
@@ -46,7 +46,6 @@ jobs:
               --config=p/secrets \
               --text --output=/racine/semgrep-human-report.txt \
           || echo "Semgrep : alertes détectées."
-
       # 4. SCA (Dépendances) + IaC (Dockerfile) — Scan fusionné
       - name: SCA + IaC — Trivy All-in-One Scan
         run: |
@@ -57,15 +56,10 @@ jobs:
               --scanners vuln,config \
               --format table \
               --severity HIGH,CRITICAL \
-              --output /racine/trivy-security-report.txt \
-          || echo "Trivy : vulnérabilités détectées."
+              --output /toto/trivy-security-report.txt \
+          || echo "Trivy : vulnérabilités détectées, rapport généré."
 
-      # 5. Debug — Vérification des fichiers (optionnel)
-      - name: Debug — Lister les fichiers générés
-        run: ls -l semgrep-human-report.txt trivy-security-report.txt
-        if: always()
-
-      # 6. Archive des rapports
+      # 5. Archive des rapports
       - name: Archivage des rapports
         uses: actions/upload-artifact@v4
         if: always()
