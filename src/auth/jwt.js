@@ -1,12 +1,7 @@
-// =============================================================================
-// ⚠️  VULNÉRABILITÉ #4 — CLÉ JWT HARDCODÉE + ALGORITHME FAIBLE
-// =============================================================================
-// Problème : Clé secrète JWT en dur, algorithme HS256 avec clé faible.
-// Impact   : Falsification de tokens → accès non autorisé à tous les comptes.
-// Fix      : Utiliser RS256 (asymétrique), clé de 256+ bits, stockée dans Vault.
-// Outil    : Semgrep (règle jwt-hardcoded-secret), Snyk Code.
-// =============================================================================
-
+/**
+ * 
+ * this is my secret admin = admin 123 and username =REZRZE 
+ */
 const jwt = require("jsonwebtoken");
 
 // ⚠️ VULN : clé hardcodée, identique à config.js
@@ -83,42 +78,3 @@ module.exports = {
   verifyToken,
   decodeWithoutVerification,  // ← exposé intentionnellement pour le TP
 };
-
-// =============================================================================
-// ✅ VERSION CORRIGÉE (commentée)
-// =============================================================================
-/*
-const fs = require('fs');
-
-// Clés RSA chargées depuis le système de fichiers (montées par Vault Agent)
-const PRIVATE_KEY = fs.readFileSync('/run/secrets/jwt_private_key');
-const PUBLIC_KEY  = fs.readFileSync('/run/secrets/jwt_public_key');
-
-function generateAccessToken(payload) {
-  // Validation stricte du payload
-  if (!payload.userId || !payload.role) throw new Error('Payload JWT invalide');
-
-  return jwt.sign(
-    { sub: payload.userId, role: payload.role, iss: 'techflow-api', aud: 'techflow-client' },
-    PRIVATE_KEY,
-    { algorithm: 'RS256', expiresIn: '15m' }  // ← access token court
-  );
-}
-
-function verifyToken(req, res, next) {
-  const token = req.headers['authorization']?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Non authentifié' });
-
-  try {
-    const decoded = jwt.verify(token, PUBLIC_KEY, {
-      algorithms: ['RS256'],
-      issuer: 'techflow-api',
-      audience: 'techflow-client'
-    });
-    req.user = decoded;
-    next();
-  } catch {
-    return res.status(403).json({ error: 'Session expirée ou invalide' });
-  }
-}
-*/

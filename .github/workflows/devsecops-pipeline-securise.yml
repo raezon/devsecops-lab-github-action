@@ -160,7 +160,7 @@ jobs:
           # On lance le scan et on force les noms de rapports
           docker run --rm -v ${{ github.workspace }}:/zap/wrk/:rw --network=host \
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-          -t http://localhost:3000 \
+          -t http://localhost:3000/api/endpoints \
           -r report_html.html \
           -w report_md.md \
           -J report_json.json

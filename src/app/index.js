@@ -74,6 +74,18 @@ app.get("/api/vulnerable/download", (req, res) => {
   res.sendFile(__dirname + "/../public/" + file); 
 });
 
+// Route qui liste les endpoints pour aider ZAP à mapper l'API
+app.get("/api/endpoints", (req, res) => {
+  res.json({
+    routes: [
+      { path: "/api/users", method: "GET" },
+      { path: "/api/vulnerable/search", method: "GET", params: ["id"] },
+      { path: "/api/vulnerable/hello", method: "GET", params: ["name"] },
+      { path: "/api/vulnerable/download", method: "GET", params: ["file"] },
+      { path: "/api/vulnerable/debug", method: "GET" }
+    ]
+  });
+});
 // =============================================================================
 // 5. GESTIONNAIRE D'ERREURS GLOBAL (Doit être en dernier)
 // =============================================================================
