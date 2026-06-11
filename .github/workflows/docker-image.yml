@@ -44,13 +44,12 @@ jobs:
               --config=p/nodejs \
               --config=p/owasp-top-ten \
               --config=p/secrets \
-              --text --output=semgrep-human-report.txt \
+              --text --output=/work/semgrep-human-report.txt \
           || echo "Semgrep : alertes détectées, rapport généré."
 
       # 4. SCA (Dépendances) + IaC (Dockerfile) — Scan fusionné
       - name: SCA + IaC — Trivy All-in-One Scan
         run: |
-          # On lie la racine de ton repo au dossier /racine du conteneur
           docker run --rm \
             -v ~/.cache/trivy:/root/.cache/trivy \
             -v "${{ github.workspace }}:/racine" \
@@ -59,9 +58,9 @@ jobs:
               --format table \
               --severity HIGH,CRITICAL \
               --output /racine/trivy-security-report.txt \
-          || echo "Trivy : vulnérabilités détectées."
+          || echo "Trivy : vulnérabilités détectées, rapport généré."
 
-      # 6. Archive des rapports
+      # 5. Archive des rapports
       - name: Archivage des rapports
         uses: actions/upload-artifact@v4
         if: always()
@@ -69,6 +68,5 @@ jobs:
           name: module1-security-reports
           path: |
             semgrep-human-report.txt
-            trivy-sca-report.txt
-            trivy-dockerfile-report.txt
+            trivy-security-report.txt
           retention-days: 30
