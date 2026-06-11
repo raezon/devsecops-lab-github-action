@@ -55,7 +55,7 @@ jobs:
             --severity HIGH,CRITICAL \
             --output /src/trivy-sca-report.txt || echo "SCA complété."
 
-      # 3. IaC/Misconfig (Trivy - Dockerfile Security à la racine)
+      # 3. IaC/Misconfig (Trivy — Pointé sur la racine /src/ pour scanner le Dockerfile)
       - name: 🐳 Trivy Config — Scan Sécurité du Dockerfile
         run: |
           docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest config /src/ \
@@ -134,7 +134,7 @@ jobs:
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
 
-      # ✅ Modification : Utilisation du docker-compose.yml classique
+      # ✅ Utilisation propre du docker-compose.yml à la racine
       - name: Déployer l'environnement local avec Docker Compose
         run: |
           IMAGE_TAG=${{ github.sha }} IMAGE_NAME=${{ env.IMAGE_NAME }} docker compose up -d
@@ -153,7 +153,7 @@ jobs:
           docker compose logs
           exit 1
 
-      # ✅ Résout définitivement l'erreur [Errno 13] Permission Denied
+      # ✅ Supprime définitivement le problème de permissions pour ZAP
       - name: 🔓 Fix permissions pour OWASP ZAP
         run: chmod -R 777 ${{ github.workspace }}
 
@@ -174,7 +174,7 @@ jobs:
             zap_report.html
             zap_report.md
 
-      # ✅ Nettoyage basé sur le fichier de configuration par défaut
+      # ✅ Nettoyage
       - name: Stop Local Environment
         if: always()
         run: docker compose down || true
