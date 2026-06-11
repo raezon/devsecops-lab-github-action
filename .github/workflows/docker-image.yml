@@ -44,7 +44,7 @@ jobs:
               --config=p/nodejs \
               --config=p/owasp-top-ten \
               --config=p/secrets \
-              --text --output=/src/semgrep-human-report.txt \
+              --text --output=/racine/semgrep-human-report.txt \
           || echo "Semgrep : alertes détectées."
 
       # 4. SCA (Dépendances) + IaC (Dockerfile) — Scan fusionné
