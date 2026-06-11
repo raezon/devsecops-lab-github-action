@@ -55,10 +55,10 @@ jobs:
             --severity HIGH,CRITICAL \
             --output /src/trivy-sca-report.txt || echo "SCA complété."
 
-      # 3. IaC/Misconfig (Trivy - Dockerfile Security)
+      # 3. IaC/Misconfig (Trivy - Dockerfile Security corrigé à la racine)
       - name: 🐳 Trivy Config — Scan Sécurité du Dockerfile
         run: |
-          docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest config /src/docker/ \
+          docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest config /src/ \
             --format table \
             --severity HIGH,CRITICAL \
             --output /src/trivy-dockerfile-report.txt || echo "Scan du Dockerfile complété."
@@ -69,7 +69,7 @@ jobs:
 
       - name: 🐳 Build Image Docker
         run: |
-          docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Échec du build Docker"
+          docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Échec du build Docker"
 
       # 5. Container Scan Local (Trivy Image) - Format Markdown Humain
       - name: 🐳 Trivy — Scan de l'image Docker (Markdown)
@@ -103,7 +103,7 @@ jobs:
           npm ci
           npm test -- --coverage || echo "Certains tests unitaires ont échoué."
 
-      # 8. Téléversement des rapports ENRICHIS (Contient désormais le scan Package ET Dockerfile)
+      # 8. Téléversement des rapports ENRICHIS
       - name: 💾 [Artéfact] Archivage des rapports d'analyse
         uses: actions/upload-artifact@v4
         if: always()
@@ -118,9 +118,6 @@ jobs:
             coverage/
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 2 : Déploiement Staging & DAST (S'exécute QUOI QU'IL ARRIVE)
-  # ════════════════════════════════════════════════════════════════════════════
-# ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 2 : Déploiement Staging & DAST (Nettoyé, ultra-rapide et local)
   # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
@@ -135,23 +132,22 @@ jobs:
       - name: Log in to GHCR et Build local pour Staging
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Build de secours appliqué"
+          docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Build de secours appliqué"
 
       - name: Déployer l'environnement Staging en Local
         run: |
           IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.staging.yml up -d || echo "Docker-compose déjà démarré ou géré"
-          # Attente rapide pour s'assurer que l'API a démarré sur son port
           sleep 5
 
-      # 🎯 On attaque directement localhost sans aucun intermédiaire !
+      # 🎯 Résolution du problème de droits d'écriture de ZAP via l'hôte
       - name: OWASP ZAP — Scan DAST Local
         uses: zaproxy/action-baseline@v0.11.0
         with:
           target: 'http://localhost:3000'
           fail_action: false
           rules_file_name: ".zap-rules.tsv"
-          # On indique à ZAP d'utiliser le réseau de l'hôte pour joindre le localhost du runner
-          docker_name_args: '--network=host'
+          # ✅ FIX DIRECT : On ajoute "-u 0" pour donner les droits root à ZAP pour écrire ses rapports sur le runner
+          docker_name_args: '--network=host -u 0'
 
       - name: 💾 [Artéfact] Téléverser Rapport DAST (Lisible)
         uses: actions/upload-artifact@v4
@@ -165,6 +161,7 @@ jobs:
       - name: Stop Staging Environment
         if: always()
         run: docker compose -f docker-compose.staging.yml down || true
+
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : QUALITY GATE (Le seul point de contrôle strict)
   # ════════════════════════════════════════════════════════════════════════════
@@ -217,7 +214,7 @@ jobs:
       - name: Connexion au Registre & Push de l'image validée
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+          docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Deploy final
