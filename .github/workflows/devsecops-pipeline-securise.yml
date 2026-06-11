@@ -17,7 +17,7 @@ env:
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # ÉTAPE 1 : Intégration, Scans (SAST/SCA) & Tests Globaux
+  # ÉTAPE 1 : Intégration, Scans (SAST/SCA/IaC) & Tests Globaux
   # ════════════════════════════════════════════════════════════════════════════
   build-and-scan:
     name: "🛠️ Build, Tests & Scans de Sécurité"
@@ -36,7 +36,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-security-caches-
 
-      # 1. SAST Local (Semgrep) - Utilise le dossier de cache local
+      # 1. SAST Local (Semgrep)
       - name: 🔍 Semgrep OSS Scan
         run: |
           docker run --rm -v ~/.cache/semgrep:/workspace/.cache/semgrep -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep ci \
@@ -46,15 +46,24 @@ jobs:
             --config=p/secrets \
             --text --output=semgrep-human-report.txt || echo "Scans Semgrep complétés avec des alertes."
 
-      # 2. SCA Local (Trivy Containerisé) - Utilise le cache Trivy DB pour éviter les téléchargements lourds
-      - name: 📦 Trivy SCA — Scan du Code Source
+      # 2. SCA Local (Trivy - Packages Applicatifs)
+      - name: 📦 Trivy SCA — Scan des Dépendances (Packages)
         run: |
           docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest fs /src \
+            --scanners vuln \
             --format table \
             --severity HIGH,CRITICAL \
-            --output /src/trivy-sca-report.txt || echo "SCA complété (Certains fichiers de lock ou répertoires ont été sautés)."
+            --output /src/trivy-sca-report.txt || echo "SCA complété."
 
-      # 3. Build Image Docker local
+      # 3. IaC/Misconfig (Trivy - Dockerfile Security)
+      - name: 🐳 Trivy Config — Scan Sécurité du Dockerfile
+        run: |
+          docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest config /src/docker/ \
+            --format table \
+            --severity HIGH,CRITICAL \
+            --output /src/trivy-dockerfile-report.txt || echo "Scan du Dockerfile complété."
+
+      # 4. Build Image Docker local
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -62,7 +71,7 @@ jobs:
         run: |
           docker build -f docker/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Échec du build Docker"
 
-      # 4. Container Scan Local (Trivy Image) - Format Markdown Humain
+      # 5. Container Scan Local (Trivy Image) - Format Markdown Humain
       - name: 🐳 Trivy — Scan de l'image Docker (Markdown)
         uses: aquasecurity/trivy-action@v0.20.0
         continue-on-error: true
@@ -73,7 +82,7 @@ jobs:
           output: 'trivy-image-report.md'
           severity: 'HIGH,CRITICAL'
 
-      # 5. Export JSON technique indispensable pour l'étape du Quality Gate
+      # 6. Export JSON technique indispensable pour l'étape du Quality Gate
       - name: 💾 Trivy — Export JSON pour le Quality Gate final
         uses: aquasecurity/trivy-action@v0.20.0
         continue-on-error: true
@@ -83,7 +92,7 @@ jobs:
           output: 'trivy-image-results.json'
           severity: 'HIGH,CRITICAL'
 
-      # 6. Tests unitaires & Couverture (Géré par le cache natif npm)
+      # 7. Tests unitaires & Couverture
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -94,7 +103,7 @@ jobs:
           npm ci
           npm test -- --coverage || echo "Certains tests unitaires ont échoué."
 
-      # 7. Téléversement de TOUS les rapports au format humain et machine
+      # 8. Téléversement des rapports ENRICHIS (Contient désormais le scan Package ET Dockerfile)
       - name: 💾 [Artéfact] Archivage des rapports d'analyse
         uses: actions/upload-artifact@v4
         if: always()
@@ -103,6 +112,7 @@ jobs:
           path: |
             semgrep-human-report.txt
             trivy-sca-report.txt
+            trivy-dockerfile-report.txt
             trivy-image-report.md
             trivy-image-results.json
             coverage/
@@ -129,7 +139,6 @@ jobs:
           IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.staging.yml up -d || echo "Docker-compose déjà démarré ou géré"
           sleep 15
 
-      # 🌐 Plus besoin de l'action GitHub instable, installation directe via CLI en Bash
       - name: 🌐 Start ngrok tunnel (CLI)
         id: ngrok
         continue-on-error: true
