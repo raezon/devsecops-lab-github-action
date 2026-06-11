@@ -56,7 +56,7 @@ jobs:
               --scanners vuln,config \
               --format table \
               --severity HIGH,CRITICAL \
-              --output /toto/trivy-security-report.txt \
+              --output /racine/trivy-security-report.txt \
           || echo "Trivy : vulnérabilités détectées, rapport généré."
 
       # 5. Archive des rapports
