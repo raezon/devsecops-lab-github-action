@@ -99,6 +99,9 @@ jobs:
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 2 : Déploiement Staging & DAST (S'exécute QUOI QU'IL ARRIVE)
   # ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
+  # ÉTAPE 2 : Déploiement Staging & DAST (S'exécute QUOI QU'IL ARRIVE)
+  # ════════════════════════════════════════════════════════════════════════════
   staging-and-dast:
     name: "🔬 Staging & DAST (OWASP ZAP)"
     runs-on: ubuntu-22.04
@@ -121,7 +124,7 @@ jobs:
       - name: Start ngrok tunnel
         id: ngrok
         continue-on-error: true
-        uses: ngrok/ngrok-forwarder-action@v2
+        uses: ngrok/actions@v2     # ✅ Correction ici : Utilisation de l'action officielle à jour
         with:
           ngrok_auth_token: ${{ secrets.NGROK_AUTH_TOKEN }}
           port: "3000"
@@ -145,7 +148,6 @@ jobs:
       - name: Stop Staging Environment
         if: always()
         run: docker compose -f docker-compose.staging.yml down || true
-
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : QUALITY GATE (Le seul point de contrôle strict)
   # ════════════════════════════════════════════════════════════════════════════
