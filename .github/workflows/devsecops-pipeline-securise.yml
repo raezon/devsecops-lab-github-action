@@ -55,7 +55,7 @@ jobs:
             --severity HIGH,CRITICAL \
             --output /src/trivy-sca-report.txt || echo "SCA complété."
 
-      # 3. IaC/Misconfig (Trivy - Dockerfile Security corrigé à la racine)
+      # 3. IaC/Misconfig (Trivy - Dockerfile Security à la racine)
       - name: 🐳 Trivy Config — Scan Sécurité du Dockerfile
         run: |
           docker run --rm -v ~/.cache/trivy:/root/.cache/trivy -v "${{ github.workspace }}:/src" aquasec/trivy:latest config /src/ \
@@ -129,25 +129,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR et Build local pour Staging
+      - name: Log in to GHCR et Build local pour l'environnement
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} . || echo "Build de secours appliqué"
+          docker build -f Dockerfile -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
 
-      - name: Déployer l'environnement Staging en Local
+      # ✅ Modification : Utilisation du docker-compose.yml classique
+      - name: Déployer l'environnement local avec Docker Compose
         run: |
-          IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.staging.yml up -d || echo "Docker-compose déjà démarré ou géré"
-          sleep 5
+          IMAGE_TAG=${{ github.sha }} IMAGE_NAME=${{ env.IMAGE_NAME }} docker compose up -d
+          
+          echo "⌛ Attente active du démarrage de l'API..."
+          for i in {1..10}; do
+            if curl -s http://localhost:3000/health | grep -q "ok"; then
+              echo "✅ L'API a démarré et répond parfaitement sur http://localhost:3000/health !"
+              exit 0
+            fi
+            echo "   ... toujours en attente (essai $i/10) ..."
+            sleep 3
+          done
+          
+          echo "❌ CRASH DÉTECTÉ : L'API a refusé de démarrer. Extraction immédiate des logs :"
+          docker compose logs
+          exit 1
 
-      # 🎯 Résolution du problème de droits d'écriture de ZAP via l'hôte
+      # ✅ Résout définitivement l'erreur [Errno 13] Permission Denied
+      - name: 🔓 Fix permissions pour OWASP ZAP
+        run: chmod -R 777 ${{ github.workspace }}
+
       - name: OWASP ZAP — Scan DAST Local
         uses: zaproxy/action-baseline@v0.11.0
         with:
           target: 'http://localhost:3000'
           fail_action: false
           rules_file_name: ".zap-rules.tsv"
-          # ✅ FIX DIRECT : On ajoute "-u 0" pour donner les droits root à ZAP pour écrire ses rapports sur le runner
-          docker_name_args: '--network=host -u 0'
+          docker_name_args: '--network=host'
 
       - name: 💾 [Artéfact] Téléverser Rapport DAST (Lisible)
         uses: actions/upload-artifact@v4
@@ -158,9 +174,10 @@ jobs:
             zap_report.html
             zap_report.md
 
-      - name: Stop Staging Environment
+      # ✅ Nettoyage basé sur le fichier de configuration par défaut
+      - name: Stop Local Environment
         if: always()
-        run: docker compose -f docker-compose.staging.yml down || true
+        run: docker compose down || true
 
   # ════════════════════════════════════════════════════════════════════════════
   # ÉTAPE 3 : QUALITY GATE (Le seul point de contrôle strict)
